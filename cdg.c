@@ -486,13 +486,22 @@ void build_sets(unsigned grid_size) {
 
 }
 
-
-
 int main(int argc, char *argv[]) {
     long gs;
     char *ep;
-    if (argc < 2 || (gs = strtol(argv[1], &ep, 10)) < 4 || *ep != '\0' || gs > 15   ) {
-        fprintf(stderr, "need a grid size argument between 4 and 15\n");
+    if  (    argc < 2
+        ||   argc > 3
+        ) {
+        fprintf(stderr, "./cdg ( grid size between 4 and 15 ) [ optional 32-bit seed ]\n\n");
+        fprintf(stderr, "generates a puzzle as a HTML document. example usage:\n\n");
+        fprintf(stderr, "  ./cdg 9 200 > puzzle200.html\n");
+        return EXIT_FAILURE;
+    }
+    if  (    (gs = strtol(argv[1], &ep, 10)) < 4
+        ||   *ep != '\0'
+        ||   gs > 15
+        ) {
+        fprintf(stderr, "grid size argument must be between 4 and 15\n");
         return EXIT_FAILURE;
     }
     if (argc == 3) {
@@ -503,7 +512,6 @@ int main(int argc, char *argv[]) {
         }
         srand((unsigned)s);
     }
-
     build_sets(gs);
     return EXIT_SUCCESS;
 }
