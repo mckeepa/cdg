@@ -1,0 +1,2 @@
+# cdg
+Calcduko puzzle generator
