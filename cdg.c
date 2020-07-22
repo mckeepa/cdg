@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <string.h>
 
+/* Stolen from cop/cop_sort.h */
 #define COP_SORT_INSERTION(fn_name_, data_type_, comparator_macro_) \
 void fn_name_(data_type_ *inout, size_t nb_elements) \
 { \
@@ -18,17 +19,22 @@ void fn_name_(data_type_ *inout, size_t nb_elements) \
 	} \
 }
 
-#define MAX_LENGTH (7)
-#define MAX_GRID   (16)
+/* Set structure. This is poorly named.
+ *
+ * This is a container of bits representing a large unsigned number. It
+ * contains SET_BITS bits held using SET_ELEMENTS unsigned 64-bit numbers.
+ * Bit 0 is the most significant bit. Bit SET_BITS-1 is the least significant
+ * bit. */
 
 #define SET_ELEMENTS (4)
 #define SET_BITS     (64*SET_ELEMENTS)
 
-struct set {
+struct bigu {
     uint_fast64_t groups[SET_ELEMENTS];
 };
 
-int set_cmp(const struct set *p_1, const struct set *p_2) {
+/* Compare two big numbers. Non-zero if p_1 is bigger than p_2. */
+static int bigu_is_gt(const struct bigu *p_1, const struct bigu *p_2) {
     unsigned i;
     for (i = 0; i < SET_ELEMENTS; i++) {
         if (p_1->groups[i] > p_2->groups[i])
@@ -39,56 +45,49 @@ int set_cmp(const struct set *p_1, const struct set *p_2) {
     return 0;
 }
 
-#define SET_CMP(a_, b_) (set_cmp(&(a_), &(b_)))
-COP_SORT_INSERTION(sort_sets, struct set, SET_CMP)
-#undef SET_CMP
+#define BIGU_CMP(a_, b_) (bigu_is_gt(&(a_), &(b_)))
+static COP_SORT_INSERTION(bigu_sort, struct bigu, BIGU_CMP)
+#undef BIGU_CMP
 
-
-void set_or(struct set *p, unsigned bit) {
+static void bigu_set(struct bigu *p, unsigned bit) {
+    assert(bit < SET_BITS);
     p->groups[bit / 64] |= 1ull << (63 - (bit & 63));
 }
-
-void set_empty(struct set *p) {
+static int bigu_get(const struct bigu *p, unsigned bit) {
+    assert(bit < SET_BITS);
+    return (p->groups[bit / 64] & (1ull << (63 - (bit & 63)))) ? 1 : 0;
+}
+static void bigu_zero(struct bigu *p) {
     unsigned i;
     for (i = 0; i < SET_ELEMENTS; i++)
         p->groups[i] = 0;
 }
-
-void set_set(struct set *p, unsigned bit) {
-    set_empty(p);
-    set_or(p, bit);
-}
-
-int set_includes(const struct set *p, unsigned bit) {
-    return (p->groups[bit / 64] & (1ull << (63 - (bit & 63)))) ? 1 : 0;
-}
-
-unsigned find_next_empty(struct set *p) {
-    unsigned i;
-    for (i = 0; i < SET_BITS; i++) {
-        if (!set_includes(p, i))
-            return i;
-    }
-    abort();
-}
-
-int set_has_non_zero_intersection(const struct set *p, const struct set *q) {
-    unsigned i;
-    for (i = 0; i < SET_ELEMENTS; i++)
-        if (p->groups[i] & q->groups[i])
-            return 1;
-    return 0;
-}
-
-void set_union(struct set *p, const struct set *q) {
+static void bigu_or(struct bigu *p, const struct bigu *q) {
     unsigned i;
     for (i = 0; i < SET_ELEMENTS; i++) {
         assert((p->groups[i] & q->groups[i]) == 0);
         p->groups[i] |= q->groups[i];
     }
 }
-
-int set_is_equal(const struct set *p, const struct set *q) {
+/* Count leading set bits. This finds the index of the first zeroed bit in the
+ * big number. Undefined if all bits are set. */
+static unsigned bigu_cls(struct bigu *p) {
+    unsigned i = 0;
+    while (bigu_get(p, i))
+        i++;
+    return i;
+}
+/* Returns zero if the logical-and of the bits in the two big numbers is
+ * zero. */
+static int bigu_and_zero(const struct bigu *p, const struct bigu *q) {
+    unsigned i;
+    for (i = 0; i < SET_ELEMENTS; i++)
+        if (p->groups[i] & q->groups[i])
+            return 1;
+    return 0;
+}
+/* Returns zero if the two big numbers are different. */
+static int bigu_is_equal(const struct bigu *p, const struct bigu *q) {
     unsigned i;
     for (i = 0; i < SET_ELEMENTS; i++)
         if (p->groups[i] != q->groups[i])
@@ -96,33 +95,40 @@ int set_is_equal(const struct set *p, const struct set *q) {
     return 1;
 }
 
-void set_print(const struct set *p) {
+static void bigu_print(const struct bigu *p) {
     unsigned i;
     for (i = 0; i < SET_ELEMENTS; i++)
         printf("%016llx", p->groups[i]);
     printf("\n");    
 }
 
+#define MAX_LENGTH (7)
+#define MAX_GRID   (16)
+
+/* Finds a combination of the given p_sets that is a unique covering of
+ * p_complete. Returns zero on failure. Otherwise returns the number of
+ * elements in p_shape_stack array that form the unique cover. */
+static
 unsigned
 recursive_search
-    (struct set        current_set
-    ,const struct set *p_complete
-    ,const struct set *p_sets
-    ,unsigned         *p_level_offsets
-    ,unsigned          level
-    ,struct set       *p_shape_stack
-    ,unsigned          shape_stack_height
+    (struct bigu        current_set
+    ,const struct bigu *p_complete
+    ,const struct bigu *p_sets
+    ,unsigned          *p_level_offsets
+    ,unsigned           level
+    ,struct bigu       *p_shape_stack
+    ,unsigned           shape_stack_height
     ) {
     unsigned i;
     for (i = p_level_offsets[level]; i < p_level_offsets[level+1]; i++) {
-        if (!set_has_non_zero_intersection(&(current_set), &(p_sets[i]))) {
-            struct set next = current_set;
+        if (!bigu_and_zero(&(current_set), &(p_sets[i]))) {
+            struct bigu next = current_set;
             unsigned u;
-            set_union(&next, &(p_sets[i]));
+            bigu_or(&next, &(p_sets[i]));
             p_shape_stack[shape_stack_height++] = p_sets[i];
-            if (set_is_equal(&next, p_complete))
+            if (bigu_is_equal(&next, p_complete))
                 return shape_stack_height;
-            u = recursive_search(next, p_complete, p_sets, p_level_offsets, find_next_empty(&next), p_shape_stack, shape_stack_height);
+            u = recursive_search(next, p_complete, p_sets, p_level_offsets, bigu_cls(&next), p_shape_stack, shape_stack_height);
             if (u)
                 return u;
             shape_stack_height--;
@@ -131,23 +137,30 @@ recursive_search
     return 0;
 }
 
-void shuffle(unsigned *data, unsigned sz) {
+unsigned rng16(unsigned long *state) {
+    unsigned long s = *state;
+#define HULL_DOBEL_SATSIFYING_MAGIC (1u+4u*961748941u)
+    *state = (s * HULL_DOBEL_SATSIFYING_MAGIC + 1u) & 0xFFFFFFFFu;
+    return s >> 16;
+}
+
+void shuffle(unsigned *data, unsigned sz, unsigned long *rseed) {
     unsigned i;
     for (i = 0; i < 10000; i++) {
-        unsigned x = rand() % sz;
-        unsigned y = rand() % sz;
+        unsigned x = rng16(rseed) % sz;
+        unsigned y = rng16(rseed) % sz;
         unsigned tmp = data[x];
         data[x] = data[y];
         data[y] = tmp;
     }
 }
 
-void shuffle_sets(struct set *data, unsigned sz) {
+void shuffle_sets(struct bigu *data, unsigned sz, unsigned long *rseed) {
     unsigned i;
     for (i = 0; i < 10000; i++) {
-        unsigned x = rand() % sz;
-        unsigned y = rand() % sz;
-        struct set tmp = data[x];
+        unsigned x = rng16(rseed) % sz;
+        unsigned y = rng16(rseed) % sz;
+        struct bigu tmp = data[x];
         data[x] = data[y];
         data[y] = tmp;
     }
@@ -182,11 +195,11 @@ static const struct shape shapes[] =
 
 };
 
-unsigned remove_uniques(struct set *p_sets, unsigned nset) {
+unsigned remove_uniques(struct bigu *p_sets, unsigned nset) {
     unsigned i, j;
     for (i = 0; i < nset; i++) {
         for (j = i+1; j < nset; j++) {
-            if (set_is_equal(&(p_sets[i]), &(p_sets[j]))) {
+            if (bigu_is_equal(&(p_sets[i]), &(p_sets[j]))) {
                 p_sets[j--] = p_sets[--nset];
             }
         }
@@ -194,7 +207,7 @@ unsigned remove_uniques(struct set *p_sets, unsigned nset) {
     return nset;
 }
 
-unsigned insert_shape_permutations(struct set *p_sets, unsigned grid_size, const struct shape *p_shape) {
+unsigned insert_shape_permutations(struct bigu *p_sets, unsigned grid_size, const struct shape *p_shape) {
     unsigned gx, gy, sx, sy;
     unsigned sidx = 0;
     if (p_shape->height >= grid_size)
@@ -205,18 +218,18 @@ unsigned insert_shape_permutations(struct set *p_sets, unsigned grid_size, const
     for (gy = 0; gy < grid_size + 1 - p_shape->height; gy++) {
         for (gx = 0; gx < grid_size + 1 - p_shape->width; gx++) {
             for (sy = 0; sy < 8; sy++)
-                set_empty(&(p_sets[sidx+sy]));
+                bigu_zero(&(p_sets[sidx+sy]));
             for (sy = 0; sy < p_shape->height; sy++) {
                 for (sx = 0; sx < p_shape->width; sx++) {
                     if (p_shape->cells[sy*p_shape->width+sx]) {
-                        set_or(&(p_sets[sidx+0]), (gy                  +sy)*grid_size+(gx                 +sx)          );
-                        set_or(&(p_sets[sidx+1]), (gy+p_shape->height-1-sy)*grid_size+(gx                 +sx)          );
-                        set_or(&(p_sets[sidx+2]), (gy+p_shape->height-1-sy)*grid_size+(gx+p_shape->width-1-sx)          );
-                        set_or(&(p_sets[sidx+3]), (gy                  +sy)*grid_size+(gx+p_shape->width-1-sx)          );
-                        set_or(&(p_sets[sidx+4]), (gy                  +sy)          +(gx                 +sx)*grid_size);
-                        set_or(&(p_sets[sidx+5]), (gy+p_shape->height-1-sy)          +(gx                 +sx)*grid_size);
-                        set_or(&(p_sets[sidx+6]), (gy+p_shape->height-1-sy)          +(gx+p_shape->width-1-sx)*grid_size);
-                        set_or(&(p_sets[sidx+7]), (gy                  +sy)          +(gx+p_shape->width-1-sx)*grid_size);
+                        bigu_set(&(p_sets[sidx+0]), (gy                  +sy)*grid_size+(gx                 +sx)          );
+                        bigu_set(&(p_sets[sidx+1]), (gy+p_shape->height-1-sy)*grid_size+(gx                 +sx)          );
+                        bigu_set(&(p_sets[sidx+2]), (gy+p_shape->height-1-sy)*grid_size+(gx+p_shape->width-1-sx)          );
+                        bigu_set(&(p_sets[sidx+3]), (gy                  +sy)*grid_size+(gx+p_shape->width-1-sx)          );
+                        bigu_set(&(p_sets[sidx+4]), (gy                  +sy)          +(gx                 +sx)*grid_size);
+                        bigu_set(&(p_sets[sidx+5]), (gy+p_shape->height-1-sy)          +(gx                 +sx)*grid_size);
+                        bigu_set(&(p_sets[sidx+6]), (gy+p_shape->height-1-sy)          +(gx+p_shape->width-1-sx)*grid_size);
+                        bigu_set(&(p_sets[sidx+7]), (gy                  +sy)          +(gx+p_shape->width-1-sx)*grid_size);
                     }
                 }
             }
@@ -226,10 +239,11 @@ unsigned insert_shape_permutations(struct set *p_sets, unsigned grid_size, const
     return remove_uniques(p_sets, sidx);
 }
 
+#if 0
 int count_solutions
     (const unsigned *p_grid
     ,unsigned        grid_size
-    ,struct set      already_picked
+    ,struct bigu      already_picked
     ,unsigned        row_set
     ,unsigned        col_set
     ) {
@@ -238,6 +252,7 @@ int count_solutions
 
 
 }
+#endif
 
 #define MAX_SEGMENT_SIZE (8)
 
@@ -255,63 +270,66 @@ struct kkeq {
     unsigned segment_values[MAX_SEGMENT_SIZE];
 };
 
-
-void build_sets(unsigned grid_size) {
-    struct set cur;
-    struct set complete;
-    struct set sets[16384];
+void build_sets(unsigned grid_size, unsigned long *rseed) {
+    struct bigu cur;
+    struct bigu complete;
+    struct bigu sets[16384];
     unsigned   startpoints[256]; /* > 128 bits! */
     unsigned   i, j;
     unsigned   nb_set = 0;
     unsigned   grid_data[MAX_GRID*MAX_GRID];
 
     /* Build the complete shape list for this grid */
-    set_set(&complete, 0);
+    bigu_zero(&complete);
+    bigu_set(&complete, 0);
     for (i = 1; i < grid_size * grid_size; i++)
-        set_or(&complete, i);
+        bigu_set(&complete, i);
     for (i = 0; i < sizeof(shapes) / sizeof(shapes[0]); i++)
         nb_set += insert_shape_permutations(&(sets[nb_set]), grid_size, &(shapes[i]));
     assert(nb_set == remove_uniques(sets, nb_set) && "there should be no duplicate shapes in the set");
-    sort_sets(sets, nb_set);
+    bigu_sort(sets, nb_set);
 
     /* Find the set end points. */
-    set_set(&cur, 0);
+    bigu_zero(&cur);
+    bigu_set(&cur, 0);
     startpoints[0] = 0;
     for (i = 0, j = 0; i < nb_set; i++) {
-        if (!set_has_non_zero_intersection(&(sets[i]), &cur)) {
+        if (!bigu_and_zero(&(sets[i]), &cur)) {
             startpoints[j+1] = i;
-            set_set(&cur, ++j);
-            shuffle_sets(sets + startpoints[j-1], startpoints[j] - startpoints[j-1]);
-            assert(set_has_non_zero_intersection(&(sets[i]), &cur));
+            bigu_zero(&cur);
+            bigu_set(&cur, ++j);
+            shuffle_sets(sets + startpoints[j-1], startpoints[j] - startpoints[j-1], rseed);
+            assert(bigu_and_zero(&(sets[i]), &cur));
         }
     }
 
 #if 0
     /* Print shuffled sets */
     for (i = 0, j = 0; i < nb_set; i++) {
-        printf("%04d:", i); set_print(&(sets[i]));
+        printf("%04d:", i); bigu_print(&(sets[i]));
     }
 #endif
 
     /* Start with nothing */
-    set_empty(&cur);
+    bigu_zero(&cur);
     unsigned stack_size = 0;
-    struct set stack[MAX_GRID*MAX_GRID];
+    struct bigu stack[MAX_GRID*MAX_GRID];
 
     /* Add initial 1s */
     {
         unsigned pts[1000];
         for (i = 0; i < grid_size * grid_size; i++)
             pts[i] = i;
-        shuffle(pts, grid_size * grid_size);
+        shuffle(pts, grid_size * grid_size, rseed);
         for (i = 0; i < 5; i++) {
-            set_set(&(stack[stack_size++]), pts[i]);
-            set_or(&cur, pts[i]);
+            bigu_zero(&(stack[stack_size]));
+            bigu_set(&(stack[stack_size++]), pts[i]);
+            bigu_set(&cur, pts[i]);
         }
     }
 
 
-    unsigned u = recursive_search(cur, &complete, sets, startpoints, find_next_empty(&cur), stack, stack_size);
+    unsigned u = recursive_search(cur, &complete, sets, startpoints, bigu_cls(&cur), stack, stack_size);
 
     for (j = 0; j < grid_size; j++) {
         for (i = 0; i < grid_size; i++) {
@@ -319,10 +337,10 @@ void build_sets(unsigned grid_size) {
         }
     }
     for (i = 0; i < 10000; i++) {
-        unsigned r1 = rand() % grid_size;
-        unsigned r2 = rand() % grid_size;
-        unsigned c1 = rand() % grid_size;
-        unsigned c2 = rand() % grid_size;
+        unsigned r1 = rng16(rseed) % grid_size;
+        unsigned r2 = rng16(rseed) % grid_size;
+        unsigned c1 = rng16(rseed) % grid_size;
+        unsigned c2 = rng16(rseed) % grid_size;
         for (j = 0; j < grid_size; j++) {
             unsigned tmp = grid_data[r1*grid_size+j];
             grid_data[r1*grid_size+j] = grid_data[r2*grid_size+j];
@@ -356,7 +374,7 @@ void build_sets(unsigned grid_size) {
         int x = 0;
         unsigned elementindexs[16];
         for (j = 0; j < grid_size*grid_size; j++) {
-            if (set_includes(&(stack[i]), j)) {
+            if (bigu_get(&(stack[i]), j)) {
                 gridgroups[j] = i;
                 elementindexs[x++] = j;
             }
@@ -423,7 +441,7 @@ void build_sets(unsigned grid_size) {
             }
 
 
-            strcat(gridtextdata[elementindexs[0]], text_opts[rand() % nb_text_opts]);
+            strcat(gridtextdata[elementindexs[0]], text_opts[rng16(rseed) % nb_text_opts]);
         }
 
 
@@ -487,8 +505,9 @@ void build_sets(unsigned grid_size) {
 }
 
 int main(int argc, char *argv[]) {
-    long gs;
-    char *ep;
+    long           gs;
+    unsigned long  rs = 0;
+    char          *ep;
     if  (    argc < 2
         ||   argc > 3
         ) {
@@ -506,12 +525,12 @@ int main(int argc, char *argv[]) {
     }
     if (argc == 3) {
         long s;
-        if ((s = strtol(argv[2], &ep, 10)) < 0 || *ep != '\0' || s > 0xFFFFFFFF) {
+        if ((s = strtol(argv[2], &ep, 10)) < 1 || *ep != '\0' || s > 0xFFFFFFFF) {
             fprintf(stderr, "if seed is given, must be positive\n");
             return EXIT_FAILURE;
         }
-        srand((unsigned)s);
+        rs = s;
     }
-    build_sets(gs);
+    build_sets(gs, &rs);
     return EXIT_SUCCESS;
 }
