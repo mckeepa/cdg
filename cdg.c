@@ -255,11 +255,11 @@ int count_solutions
 #endif
 
 #define MAX_SEGMENT_SIZE (8)
-
-#define OP_ADD (0)
-#define OP_SUB (1)
-#define OP_MUL (2)
-#define OP_DIV (3)
+#define OP_FIXED (0)
+#define OP_SUM (1)
+#define OP_SUB (2)
+#define OP_MUL (3)
+#define OP_DIV (4)
 
 struct kkeq {
     int      operation;
@@ -269,6 +269,95 @@ struct kkeq {
     unsigned segment_indexes[MAX_SEGMENT_SIZE];
     unsigned segment_values[MAX_SEGMENT_SIZE];
 };
+
+void dump_puzzle(const struct kkeq *p_shapes, unsigned nb_shapes, unsigned grid_size) {
+    unsigned i, j;
+#define FLAG_TOP (1)
+#define FLAG_LEFT (2)
+#define FLAG_BOTTOM (4)
+#define FLAG_RIGHT  (8)
+
+    unsigned gridgroups[MAX_GRID*MAX_GRID];      /* grid_size * grid_size elements */
+    unsigned gridborders[MAX_GRID*MAX_GRID];     /* grid_size * grid_size elements */
+    char     gridtextdata[MAX_GRID*MAX_GRID][8]; /* u elements */
+    memset(gridtextdata, 0, sizeof(gridtextdata));
+
+    for (i = 0; i < nb_shapes; i++) {
+        int x = 0;
+        for (j = 0; j < p_shapes[i].nb_segment; j++) {
+            gridgroups[p_shapes[i].segment_indexes[j]] = i;
+        }
+        switch (p_shapes[i].operation) {
+        case OP_SUM:
+            sprintf(gridtextdata[p_shapes[i].segment_indexes[0]], "%d+", p_shapes[i].value);
+            break;
+        case OP_SUB:
+            sprintf(gridtextdata[p_shapes[i].segment_indexes[0]], "%d-", p_shapes[i].value);
+            break;
+        case OP_MUL:
+            sprintf(gridtextdata[p_shapes[i].segment_indexes[0]], "%d*", p_shapes[i].value);
+            break;
+        case OP_DIV:
+            sprintf(gridtextdata[p_shapes[i].segment_indexes[0]], "%d/", p_shapes[i].value);
+            break;
+        default:
+            sprintf(gridtextdata[p_shapes[i].segment_indexes[0]], "%d", p_shapes[i].value);
+            break;
+        }
+    }
+
+#if 0 /* cheat */
+    for (j = 0; j < grid_size*grid_size; j++) {
+        sprintf(gridtextdata[j], "%d ", grid_data[j]);
+    }
+#endif
+
+    for (j = 0; j < grid_size; j++) {
+        for (i = 0; i < grid_size; i++) {
+            unsigned bflags = 0;
+            if (i == 0 || gridgroups[j*grid_size+i] != gridgroups[j*grid_size+i-1])
+                bflags |= FLAG_LEFT;
+            if (j == 0 || gridgroups[j*grid_size+i] != gridgroups[(j-1)*grid_size+i])
+                bflags |= FLAG_TOP;
+            if (i == grid_size-1 || gridgroups[j*grid_size+i] != gridgroups[j*grid_size+i+1])
+                bflags |= FLAG_RIGHT;
+            if (j == grid_size-1 || gridgroups[j*grid_size+i] != gridgroups[(j+1)*grid_size+i])
+                bflags |= FLAG_BOTTOM;
+            gridborders[j*grid_size+i] = bflags;
+        }
+    }
+
+#if 0
+
+    for (j = 0; j < u; j++) {
+        printf("%04d:%016llx%016llx\n", j, stack[j].msset, stack[j].lsset);
+
+    }
+#endif
+
+    printf("<html><head><title>hello</title><style>table { border-collapse: collapse; } ");
+    for (i = 0; i < 16; i++) {
+        printf
+            ("td.x%d { font-size: 10px; vertical-align: top; text-align: left; border-top: %dpx solid black; border-left: %dpx solid black; border-bottom: %dpx solid black; border-right: %dpx solid black; height: 40px; width: 40px;} "
+            ,i
+            ,(i & FLAG_TOP) ? 4 : 1
+            ,(i & FLAG_LEFT) ? 4 : 1
+            ,(i & FLAG_BOTTOM) ? 4 : 1
+            ,(i & FLAG_RIGHT) ? 4 : 1
+            );
+    }
+    printf("</style></head><body><table>");
+    for (j = 0; j < grid_size; j++) {
+        printf("<tr>");
+        for (i = 0; i < grid_size; i++) {
+            printf("<td class=x%d>%s</td>", gridborders[j*grid_size+i], gridtextdata[j*grid_size+i]);
+        }
+        printf("</tr>");
+    }
+    printf("</table></body></html>");
+}
+
+
 
 void build_sets(unsigned grid_size, unsigned long *rseed) {
     struct bigu cur;
@@ -353,155 +442,104 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
         }
     }
 
+    struct kkeq shapedata[100];
 
-#define FLAG_TOP (1)
-#define FLAG_LEFT (2)
-#define FLAG_BOTTOM (4)
-#define FLAG_RIGHT  (8)
+    {
 
-    unsigned gridgroups[MAX_GRID*MAX_GRID];      /* grid_size * grid_size elements */
-    unsigned gridborders[MAX_GRID*MAX_GRID];     /* grid_size * grid_size elements */
-    char     gridtextdata[MAX_GRID*MAX_GRID][8]; /* u elements */
-    memset(gridtextdata, 0, sizeof(gridtextdata));
 
-#if 0 /* cheat */
-    for (j = 0; j < grid_size*grid_size; j++) {
-        sprintf(gridtextdata[j], "%d ", grid_data[j]);
-    }
-#endif
-
-    for (i = 0; i < u; i++) {
-        int x = 0;
-        unsigned elementindexs[16];
-        for (j = 0; j < grid_size*grid_size; j++) {
-            if (bigu_get(&(stack[i]), j)) {
-                gridgroups[j] = i;
-                elementindexs[x++] = j;
-            }
-
-        }
-        assert(x >= 0);
-        if (x == 1) {
-            sprintf(gridtextdata[elementindexs[0]], "%d", grid_data[elementindexs[0]]);
-        } else {
-            unsigned nb_text_opts = 0;
-            char text_opts[10][8];
-            {
-                unsigned sum = 0;
-                for (j = 0; j < x; j++)
-                    sum += grid_data[elementindexs[j]];
-                sprintf(text_opts[nb_text_opts++], "%d+", sum);
-                sprintf(text_opts[nb_text_opts++], "%d+", sum);
-            }
-            {
-                unsigned prod = 1;
-                for (j = 0; j < x; j++)
-                    prod *= grid_data[elementindexs[j]];
-                sprintf(text_opts[nb_text_opts++], "%dx", prod);
-                sprintf(text_opts[nb_text_opts++], "%dx", prod);
-                sprintf(text_opts[nb_text_opts++], "%dx", prod);
-            }
-            {
-                unsigned maxidx = 0;
-                unsigned max = grid_data[elementindexs[0]];
-                unsigned tmp;
-                for (j = 1; j < x; j++)
-                    if (grid_data[elementindexs[j]] > max) {
-                        max = grid_data[elementindexs[j]];
-                        maxidx = j;
-                    }
-                tmp = max;
-                for (j = 0; j < x; j++)
-                    if (j != maxidx) {
-                        if (tmp >= grid_data[elementindexs[j]]) {
-                            tmp -= grid_data[elementindexs[j]];
-                        } else {
-                            break;
-                        }
-                    }
-                if (j == x) {
-                    sprintf(text_opts[nb_text_opts++], "%d-", tmp);
-                    sprintf(text_opts[nb_text_opts++], "%d-", tmp);
-                }
-
-                tmp = max;
-                for (j = 0; j < x; j++)
-                    if (j != maxidx) {
-                        if ((tmp % grid_data[elementindexs[j]]) == 0) {
-                            tmp /= grid_data[elementindexs[j]];
-                        } else {
-                            break;
-                        }
-                    }
-                if (j == x) {
-                    sprintf(text_opts[nb_text_opts++], "%d/", tmp);
-                    sprintf(text_opts[nb_text_opts++], "%d/", tmp);
-                    sprintf(text_opts[nb_text_opts++], "%d/", tmp);
+        for (i = 0; i < u; i++) {
+            shapedata[i].nb_segment = 0;
+            for (j = 0; j < grid_size*grid_size; j++) {
+                if (bigu_get(&(stack[i]), j)) {
+                    shapedata[i].segment_indexes[shapedata[i].nb_segment] = j;
+                    shapedata[i].segment_values[shapedata[i].nb_segment]  = grid_data[j];
+                    shapedata[i].nb_segment++;
                 }
             }
 
+            assert(shapedata[i].nb_segment >= 0);
+            if (shapedata[i].nb_segment == 1) {
+                shapedata[i].operation = OP_FIXED;
+                shapedata[i].value     = shapedata[i].segment_values[0];
+            } else {
+                unsigned option_values[10];
+                unsigned option_ops[10];
+                unsigned nb_options = 0;
 
-            strcat(gridtextdata[elementindexs[0]], text_opts[rng16(rseed) % nb_text_opts]);
+                unsigned nb_text_opts = 0;
+                char text_opts[10][8];
+                {
+                    unsigned sum = 0;
+                    for (j = 0; j < shapedata[i].nb_segment; j++)
+                        sum += shapedata[i].segment_values[j];
+                    option_values[nb_options] = sum;
+                    option_ops[nb_options++]  = OP_SUM;
+                    option_values[nb_options] = sum;
+                    option_ops[nb_options++]  = OP_SUM;
+                }
+                {
+                    unsigned prod = 1;
+                    for (j = 0; j < shapedata[i].nb_segment; j++)
+                        prod *= shapedata[i].segment_values[j];
+                    option_values[nb_options] = prod;
+                    option_ops[nb_options++]  = OP_MUL;
+                    option_values[nb_options] = prod;
+                    option_ops[nb_options++]  = OP_MUL;
+                    option_values[nb_options] = prod;
+                    option_ops[nb_options++]  = OP_MUL;
+                }
+                {
+                    unsigned maxidx = 0;
+                    unsigned max = shapedata[i].segment_values[0];
+                    unsigned tmp;
+                    for (j = 1; j < shapedata[i].nb_segment; j++)
+                        if (shapedata[i].segment_values[j] > max) {
+                            max = shapedata[i].segment_values[j];
+                            maxidx = j;
+                        }
+                    tmp = max;
+                    for (j = 0; j < shapedata[i].nb_segment; j++)
+                        if (j != maxidx) {
+                            if (tmp >= shapedata[i].segment_values[j]) {
+                                tmp -= shapedata[i].segment_values[j];
+                            } else {
+                                break;
+                            }
+                        }
+                    if (j == shapedata[i].nb_segment) {
+                        option_values[nb_options] = tmp;
+                        option_ops[nb_options++]  = OP_SUB;
+                        option_values[nb_options] = tmp;
+                        option_ops[nb_options++]  = OP_SUB;
+                    }
+
+                    tmp = max;
+                    for (j = 0; j < shapedata[i].nb_segment; j++)
+                        if (j != maxidx) {
+                            if ((tmp % shapedata[i].segment_values[j]) == 0) {
+                                tmp /= shapedata[i].segment_values[j];
+                            } else {
+                                break;
+                            }
+                        }
+                    if (j == shapedata[i].nb_segment) {
+                        option_values[nb_options] = tmp;
+                        option_ops[nb_options++]  = OP_DIV;
+                        option_values[nb_options] = tmp;
+                        option_ops[nb_options++]  = OP_DIV;
+                        option_values[nb_options] = tmp;
+                        option_ops[nb_options++]  = OP_DIV;
+                    }
+                }
+
+                j = rng16(rseed) % nb_options;
+                shapedata[i].value     = option_values[j];
+                shapedata[i].operation = option_ops[j];
+            }
         }
-
-
-#if 0
-        for (j = 0; j < x; j++) {
-            printf("%d,", grid_data[elementindexs[j]]);
-        }
-        printf("\n");
-#endif
     }
 
-    for (j = 0; j < grid_size; j++) {
-        for (i = 0; i < grid_size; i++) {
-            unsigned bflags = 0;
-            if (i == 0 || gridgroups[j*grid_size+i] != gridgroups[j*grid_size+i-1])
-                bflags |= FLAG_LEFT;
-            if (j == 0 || gridgroups[j*grid_size+i] != gridgroups[(j-1)*grid_size+i])
-                bflags |= FLAG_TOP;
-            if (i == grid_size-1 || gridgroups[j*grid_size+i] != gridgroups[j*grid_size+i+1])
-                bflags |= FLAG_RIGHT;
-            if (j == grid_size-1 || gridgroups[j*grid_size+i] != gridgroups[(j+1)*grid_size+i])
-                bflags |= FLAG_BOTTOM;
-            gridborders[j*grid_size+i] = bflags;
-        }
-    }
-
-
-
-#if 0
-
-    for (j = 0; j < u; j++) {
-        printf("%04d:%016llx%016llx\n", j, stack[j].msset, stack[j].lsset);
-
-    }
-#endif
-
-
-
-
-    printf("<html><head><title>hello</title><style>table { border-collapse: collapse; } ");
-    for (i = 0; i < 16; i++) {
-        printf
-            ("td.x%d { font-size: 10px; vertical-align: top; text-align: left; border-top: %dpx solid black; border-left: %dpx solid black; border-bottom: %dpx solid black; border-right: %dpx solid black; height: 40px; width: 40px;} "
-            ,i
-            ,(i & FLAG_TOP) ? 4 : 1
-            ,(i & FLAG_LEFT) ? 4 : 1
-            ,(i & FLAG_BOTTOM) ? 4 : 1
-            ,(i & FLAG_RIGHT) ? 4 : 1
-            );
-    }
-    printf("</style></head><body><table>");
-    for (j = 0; j < grid_size; j++) {
-        printf("<tr>");
-        for (i = 0; i < grid_size; i++) {
-            printf("<td class=x%d>%s</td>", gridborders[j*grid_size+i], gridtextdata[j*grid_size+i]);
-        }
-        printf("</tr>");
-    }
-    printf("</table></body></html>");
-
+    dump_puzzle(shapedata, u, grid_size);
 }
 
 int main(int argc, char *argv[]) {
