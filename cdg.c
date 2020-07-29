@@ -172,6 +172,7 @@ struct shape {
     unsigned cells[46]; /* whevever */
 };
 
+
 static const struct shape shapes[] =
 /* 2 pieces */
 {   {2, 1, {1, 1}}
@@ -264,13 +265,18 @@ int count_solutions
 struct kkeq {
     int      operation;
     unsigned value;
-
     unsigned nb_segment;
     unsigned segment_indexes[MAX_SEGMENT_SIZE];
-    unsigned segment_values[MAX_SEGMENT_SIZE];
+
 };
 
-void dump_puzzle(const struct kkeq *p_shapes, unsigned nb_shapes, unsigned grid_size) {
+
+
+#define KKEQ_CMP(a_, b_) ((a_).nb_segment < (b_).nb_segment)
+static COP_SORT_INSERTION(kkeq_sort, struct kkeq, KKEQ_CMP)
+#undef KKEQ_CMP
+
+void dump_puzzle(const struct kkeq *p_shapes, const unsigned *p_grid_values, unsigned nb_shapes, unsigned grid_size, int cheat) {
     unsigned i, j;
 #define FLAG_TOP (1)
 #define FLAG_LEFT (2)
@@ -279,7 +285,7 @@ void dump_puzzle(const struct kkeq *p_shapes, unsigned nb_shapes, unsigned grid_
 
     unsigned gridgroups[MAX_GRID*MAX_GRID];      /* grid_size * grid_size elements */
     unsigned gridborders[MAX_GRID*MAX_GRID];     /* grid_size * grid_size elements */
-    char     gridtextdata[MAX_GRID*MAX_GRID][8]; /* u elements */
+    char     gridtextdata[MAX_GRID*MAX_GRID][16]; /* u elements */
     memset(gridtextdata, 0, sizeof(gridtextdata));
 
     for (i = 0; i < nb_shapes; i++) {
@@ -306,11 +312,15 @@ void dump_puzzle(const struct kkeq *p_shapes, unsigned nb_shapes, unsigned grid_
         }
     }
 
-#if 0 /* cheat */
-    for (j = 0; j < grid_size*grid_size; j++) {
-        sprintf(gridtextdata[j], "%d ", grid_data[j]);
+    if (cheat) {
+        for (i = 0; i < nb_shapes; i++) {
+            for (j = 0; j < p_shapes[i].nb_segment; j++) {
+                char buf[16];
+                sprintf(buf, " = %d", p_grid_values[p_shapes[i].segment_indexes[j]]);
+                strcat(gridtextdata[p_shapes[i].segment_indexes[j]], buf);
+            }
+        }
     }
-#endif
 
     for (j = 0; j < grid_size; j++) {
         for (i = 0; i < grid_size; i++) {
@@ -326,14 +336,6 @@ void dump_puzzle(const struct kkeq *p_shapes, unsigned nb_shapes, unsigned grid_
             gridborders[j*grid_size+i] = bflags;
         }
     }
-
-#if 0
-
-    for (j = 0; j < u; j++) {
-        printf("%04d:%016llx%016llx\n", j, stack[j].msset, stack[j].lsset);
-
-    }
-#endif
 
     printf("<html><head><title>hello</title><style>table { border-collapse: collapse; } ");
     for (i = 0; i < 16; i++) {
@@ -452,7 +454,6 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
             for (j = 0; j < grid_size*grid_size; j++) {
                 if (bigu_get(&(stack[i]), j)) {
                     shapedata[i].segment_indexes[shapedata[i].nb_segment] = j;
-                    shapedata[i].segment_values[shapedata[i].nb_segment]  = grid_data[j];
                     shapedata[i].nb_segment++;
                 }
             }
@@ -460,7 +461,7 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
             assert(shapedata[i].nb_segment >= 0);
             if (shapedata[i].nb_segment == 1) {
                 shapedata[i].operation = OP_FIXED;
-                shapedata[i].value     = shapedata[i].segment_values[0];
+                shapedata[i].value     = grid_data[shapedata[i].segment_indexes[0]];
             } else {
                 unsigned option_values[10];
                 unsigned option_ops[10];
@@ -471,7 +472,7 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
                 {
                     unsigned sum = 0;
                     for (j = 0; j < shapedata[i].nb_segment; j++)
-                        sum += shapedata[i].segment_values[j];
+                        sum += grid_data[shapedata[i].segment_indexes[j]];
                     option_values[nb_options] = sum;
                     option_ops[nb_options++]  = OP_SUM;
                     option_values[nb_options] = sum;
@@ -480,7 +481,7 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
                 {
                     unsigned prod = 1;
                     for (j = 0; j < shapedata[i].nb_segment; j++)
-                        prod *= shapedata[i].segment_values[j];
+                        prod *= grid_data[shapedata[i].segment_indexes[j]];
                     option_values[nb_options] = prod;
                     option_ops[nb_options++]  = OP_MUL;
                     option_values[nb_options] = prod;
@@ -490,18 +491,18 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
                 }
                 {
                     unsigned maxidx = 0;
-                    unsigned max = shapedata[i].segment_values[0];
+                    unsigned max = grid_data[shapedata[i].segment_indexes[0]];
                     unsigned tmp;
                     for (j = 1; j < shapedata[i].nb_segment; j++)
-                        if (shapedata[i].segment_values[j] > max) {
-                            max = shapedata[i].segment_values[j];
+                        if (grid_data[shapedata[i].segment_indexes[j]] > max) {
+                            max = grid_data[shapedata[i].segment_indexes[j]];
                             maxidx = j;
                         }
                     tmp = max;
                     for (j = 0; j < shapedata[i].nb_segment; j++)
                         if (j != maxidx) {
-                            if (tmp >= shapedata[i].segment_values[j]) {
-                                tmp -= shapedata[i].segment_values[j];
+                            if (tmp >= grid_data[shapedata[i].segment_indexes[j]]) {
+                                tmp -= grid_data[shapedata[i].segment_indexes[j]];
                             } else {
                                 break;
                             }
@@ -516,8 +517,8 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
                     tmp = max;
                     for (j = 0; j < shapedata[i].nb_segment; j++)
                         if (j != maxidx) {
-                            if ((tmp % shapedata[i].segment_values[j]) == 0) {
-                                tmp /= shapedata[i].segment_values[j];
+                            if ((tmp % grid_data[shapedata[i].segment_indexes[j]]) == 0) {
+                                tmp /= grid_data[shapedata[i].segment_indexes[j]];
                             } else {
                                 break;
                             }
@@ -539,7 +540,9 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
         }
     }
 
-    dump_puzzle(shapedata, u, grid_size);
+    kkeq_sort(shapedata, u);
+
+    dump_puzzle(shapedata, grid_data, u, grid_size, 0);
 }
 
 int main(int argc, char *argv[]) {
