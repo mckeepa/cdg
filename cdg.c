@@ -359,6 +359,123 @@ void dump_puzzle(const struct kkeq *p_shapes, const unsigned *p_grid_values, uns
     printf("</table></body></html>");
 }
 
+void create_random_grid_values(unsigned *grid_data, unsigned grid_size, unsigned long *rseed) {
+    unsigned i, j;
+    for (j = 0; j < grid_size; j++) {
+        for (i = 0; i < grid_size; i++) {
+            grid_data[j*grid_size+i] = 1 + ((i+j) % grid_size);
+        }
+    }
+    for (i = 0; i < 10000; i++) {
+        unsigned r1 = rng16(rseed) % grid_size;
+        unsigned r2 = rng16(rseed) % grid_size;
+        unsigned c1 = rng16(rseed) % grid_size;
+        unsigned c2 = rng16(rseed) % grid_size;
+        for (j = 0; j < grid_size; j++) {
+            unsigned tmp = grid_data[r1*grid_size+j];
+            grid_data[r1*grid_size+j] = grid_data[r2*grid_size+j];
+            grid_data[r2*grid_size+j] = tmp;
+        }
+        for (j = 0; j < grid_size; j++) {
+            unsigned tmp = grid_data[j*grid_size+c1];
+            grid_data[j*grid_size+c1] = grid_data[j*grid_size+c2];
+            grid_data[j*grid_size+c2] = tmp;
+        }
+    }
+}
+
+void convert_sets_to_shapes(struct kkeq *p_shapes, const struct bigu *p_sets, const unsigned *p_grid_data, unsigned grid_size, unsigned nb_set, unsigned long *rseed) {
+    unsigned i, j;
+    for (i = 0; i < nb_set; i++) {
+        p_shapes[i].nb_segment = 0;
+        for (j = 0; j < grid_size*grid_size; j++) {
+            if (bigu_get(&(p_sets[i]), j)) {
+                p_shapes[i].segment_indexes[p_shapes[i].nb_segment] = j;
+                p_shapes[i].nb_segment++;
+            }
+        }
+
+        assert(p_shapes[i].nb_segment >= 0);
+        if (p_shapes[i].nb_segment == 1) {
+            p_shapes[i].operation = OP_FIXED;
+            p_shapes[i].value     = p_grid_data[p_shapes[i].segment_indexes[0]];
+        } else {
+            unsigned option_values[10];
+            unsigned option_ops[10];
+            unsigned nb_options = 0;
+
+            unsigned nb_text_opts = 0;
+            char text_opts[10][8];
+            {
+                unsigned sum = 0;
+                for (j = 0; j < p_shapes[i].nb_segment; j++)
+                    sum += p_grid_data[p_shapes[i].segment_indexes[j]];
+                option_values[nb_options] = sum;
+                option_ops[nb_options++]  = OP_SUM;
+                option_values[nb_options] = sum;
+                option_ops[nb_options++]  = OP_SUM;
+            }
+            {
+                unsigned prod = 1;
+                for (j = 0; j < p_shapes[i].nb_segment; j++)
+                    prod *= p_grid_data[p_shapes[i].segment_indexes[j]];
+                option_values[nb_options] = prod;
+                option_ops[nb_options++]  = OP_MUL;
+                option_values[nb_options] = prod;
+                option_ops[nb_options++]  = OP_MUL;
+                option_values[nb_options] = prod;
+                option_ops[nb_options++]  = OP_MUL;
+            }
+            {
+                unsigned maxidx = 0;
+                unsigned max = p_grid_data[p_shapes[i].segment_indexes[0]];
+                unsigned tmp;
+                for (j = 1; j < p_shapes[i].nb_segment; j++)
+                    if (p_grid_data[p_shapes[i].segment_indexes[j]] > max) {
+                        max = p_grid_data[p_shapes[i].segment_indexes[j]];
+                        maxidx = j;
+                    }
+                tmp = max;
+                for (j = 0; j < p_shapes[i].nb_segment; j++)
+                    if (j != maxidx) {
+                        if (tmp >= p_grid_data[p_shapes[i].segment_indexes[j]]) {
+                            tmp -= p_grid_data[p_shapes[i].segment_indexes[j]];
+                        } else {
+                            break;
+                        }
+                    }
+                if (j == p_shapes[i].nb_segment) {
+                    option_values[nb_options] = tmp;
+                    option_ops[nb_options++]  = OP_SUB;
+                    option_values[nb_options] = tmp;
+                    option_ops[nb_options++]  = OP_SUB;
+                }
+
+                tmp = max;
+                for (j = 0; j < p_shapes[i].nb_segment; j++)
+                    if (j != maxidx) {
+                        if ((tmp % p_grid_data[p_shapes[i].segment_indexes[j]]) == 0) {
+                            tmp /= p_grid_data[p_shapes[i].segment_indexes[j]];
+                        } else {
+                            break;
+                        }
+                    }
+                if (j == p_shapes[i].nb_segment) {
+                    option_values[nb_options] = tmp;
+                    option_ops[nb_options++]  = OP_DIV;
+                    option_values[nb_options] = tmp;
+                    option_ops[nb_options++]  = OP_DIV;
+                    option_values[nb_options] = tmp;
+                    option_ops[nb_options++]  = OP_DIV;
+                }
+            }
+
+            j = rng16(rseed) % nb_options;
+            p_shapes[i].value     = option_values[j];
+            p_shapes[i].operation = option_ops[j];
+        }
+    }
+}
 
 
 void build_sets(unsigned grid_size, unsigned long *rseed) {
@@ -421,124 +538,12 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
 
 
     unsigned u = recursive_search(cur, &complete, sets, startpoints, bigu_cls(&cur), stack, stack_size);
-
-    for (j = 0; j < grid_size; j++) {
-        for (i = 0; i < grid_size; i++) {
-            grid_data[j*grid_size+i] = 1 + ((i+j) % grid_size);
-        }
-    }
-    for (i = 0; i < 10000; i++) {
-        unsigned r1 = rng16(rseed) % grid_size;
-        unsigned r2 = rng16(rseed) % grid_size;
-        unsigned c1 = rng16(rseed) % grid_size;
-        unsigned c2 = rng16(rseed) % grid_size;
-        for (j = 0; j < grid_size; j++) {
-            unsigned tmp = grid_data[r1*grid_size+j];
-            grid_data[r1*grid_size+j] = grid_data[r2*grid_size+j];
-            grid_data[r2*grid_size+j] = tmp;
-        }
-        for (j = 0; j < grid_size; j++) {
-            unsigned tmp = grid_data[j*grid_size+c1];
-            grid_data[j*grid_size+c1] = grid_data[j*grid_size+c2];
-            grid_data[j*grid_size+c2] = tmp;
-        }
-    }
-
     struct kkeq shapedata[100];
 
-    {
+    create_random_grid_values(grid_data, grid_size, rseed);
 
 
-        for (i = 0; i < u; i++) {
-            shapedata[i].nb_segment = 0;
-            for (j = 0; j < grid_size*grid_size; j++) {
-                if (bigu_get(&(stack[i]), j)) {
-                    shapedata[i].segment_indexes[shapedata[i].nb_segment] = j;
-                    shapedata[i].nb_segment++;
-                }
-            }
-
-            assert(shapedata[i].nb_segment >= 0);
-            if (shapedata[i].nb_segment == 1) {
-                shapedata[i].operation = OP_FIXED;
-                shapedata[i].value     = grid_data[shapedata[i].segment_indexes[0]];
-            } else {
-                unsigned option_values[10];
-                unsigned option_ops[10];
-                unsigned nb_options = 0;
-
-                unsigned nb_text_opts = 0;
-                char text_opts[10][8];
-                {
-                    unsigned sum = 0;
-                    for (j = 0; j < shapedata[i].nb_segment; j++)
-                        sum += grid_data[shapedata[i].segment_indexes[j]];
-                    option_values[nb_options] = sum;
-                    option_ops[nb_options++]  = OP_SUM;
-                    option_values[nb_options] = sum;
-                    option_ops[nb_options++]  = OP_SUM;
-                }
-                {
-                    unsigned prod = 1;
-                    for (j = 0; j < shapedata[i].nb_segment; j++)
-                        prod *= grid_data[shapedata[i].segment_indexes[j]];
-                    option_values[nb_options] = prod;
-                    option_ops[nb_options++]  = OP_MUL;
-                    option_values[nb_options] = prod;
-                    option_ops[nb_options++]  = OP_MUL;
-                    option_values[nb_options] = prod;
-                    option_ops[nb_options++]  = OP_MUL;
-                }
-                {
-                    unsigned maxidx = 0;
-                    unsigned max = grid_data[shapedata[i].segment_indexes[0]];
-                    unsigned tmp;
-                    for (j = 1; j < shapedata[i].nb_segment; j++)
-                        if (grid_data[shapedata[i].segment_indexes[j]] > max) {
-                            max = grid_data[shapedata[i].segment_indexes[j]];
-                            maxidx = j;
-                        }
-                    tmp = max;
-                    for (j = 0; j < shapedata[i].nb_segment; j++)
-                        if (j != maxidx) {
-                            if (tmp >= grid_data[shapedata[i].segment_indexes[j]]) {
-                                tmp -= grid_data[shapedata[i].segment_indexes[j]];
-                            } else {
-                                break;
-                            }
-                        }
-                    if (j == shapedata[i].nb_segment) {
-                        option_values[nb_options] = tmp;
-                        option_ops[nb_options++]  = OP_SUB;
-                        option_values[nb_options] = tmp;
-                        option_ops[nb_options++]  = OP_SUB;
-                    }
-
-                    tmp = max;
-                    for (j = 0; j < shapedata[i].nb_segment; j++)
-                        if (j != maxidx) {
-                            if ((tmp % grid_data[shapedata[i].segment_indexes[j]]) == 0) {
-                                tmp /= grid_data[shapedata[i].segment_indexes[j]];
-                            } else {
-                                break;
-                            }
-                        }
-                    if (j == shapedata[i].nb_segment) {
-                        option_values[nb_options] = tmp;
-                        option_ops[nb_options++]  = OP_DIV;
-                        option_values[nb_options] = tmp;
-                        option_ops[nb_options++]  = OP_DIV;
-                        option_values[nb_options] = tmp;
-                        option_ops[nb_options++]  = OP_DIV;
-                    }
-                }
-
-                j = rng16(rseed) % nb_options;
-                shapedata[i].value     = option_values[j];
-                shapedata[i].operation = option_ops[j];
-            }
-        }
-    }
+    convert_sets_to_shapes(shapedata, stack, grid_data, grid_size, u, rseed);
 
     kkeq_sort(shapedata, u);
 
