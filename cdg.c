@@ -669,7 +669,7 @@ unsigned find_all_solutions_rec
             if (rvals[0] < shape_max_state || rvals[0] > grid_size)
                 rvals[0] = 0;
             rvals[1] = ((shape_max_state * shape_max_state) % (p_shapes->value * shape_state) == 0) ? ((shape_max_state * shape_max_state) / (p_shapes->value * shape_state)) : 0;
-            if (rvals[1] >= shape_max_state || rvals[1] > grid_size || rvals[1] == rvals[0])
+            if (rvals[1] > shape_max_state || rvals[1] > grid_size || rvals[1] == rvals[0])
                 rvals[1] = 0;
             for (i = 0; i < 2; i++) {
                 unsigned rval = rvals[i];
@@ -689,20 +689,19 @@ unsigned find_all_solutions_rec
         } else {
             unsigned soln_count = 0;
             if (shape_cell_idx == 0) {
-                shape_state     = 0;
-                shape_max_state = 0;
+                shape_state     = 1;
+                shape_max_state = 1;
             }
             for (i = 1; i <= grid_size; i++) {
                 unsigned nmax = (i > shape_max_state) ? i : shape_max_state;
-                /* Todo: is this correct??? */
-                if (shape_state * i / nmax >= grid_size)
+                if ((shape_state * i) / nmax > grid_size)
                     continue;
                 if ((p_col_bits[col] & (1u << i)) || (p_row_bits[row] & (1u << i)))
                     continue;
                 p_col_bits[col] |= (1u << i);
                 p_row_bits[row] |= (1u << i);
                 p_grid[addr]     = i;
-                soln_count      += find_all_solutions_rec(p_shape_list, nb_shapes, current_shape_index, nmax, shape_state + i, shape_cell_idx + 1, p_grid, grid_size, p_row_bits, p_col_bits);
+                soln_count      += find_all_solutions_rec(p_shape_list, nb_shapes, current_shape_index, nmax, shape_state * i, shape_cell_idx + 1, p_grid, grid_size, p_row_bits, p_col_bits);
                 p_col_bits[col] &= ~(1u << i);
                 p_row_bits[row] &= ~(1u << i);
                 p_grid[addr]     = 0;
