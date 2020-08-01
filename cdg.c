@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
+#include <stdint.h>
 
 /* Stolen from cop/cop_sort.h */
 #define COP_SORT_INSERTION(fn_name_, data_type_, comparator_macro_) \
@@ -337,18 +338,7 @@ void dump_puzzle(const struct kkeq *p_shapes, const unsigned *p_grid_values, uns
         }
     }
 
-    printf("<html><head><title>hello</title><style>table { border-collapse: collapse; } ");
-    for (i = 0; i < 16; i++) {
-        printf
-            ("td.x%d { font-size: 10px; vertical-align: top; text-align: left; border-top: %dpx solid black; border-left: %dpx solid black; border-bottom: %dpx solid black; border-right: %dpx solid black; height: 40px; width: 40px;} "
-            ,i
-            ,(i & FLAG_TOP) ? 4 : 1
-            ,(i & FLAG_LEFT) ? 4 : 1
-            ,(i & FLAG_BOTTOM) ? 4 : 1
-            ,(i & FLAG_RIGHT) ? 4 : 1
-            );
-    }
-    printf("</style></head><body><table>");
+    printf("<table>");
     for (j = 0; j < grid_size; j++) {
         printf("<tr>");
         for (i = 0; i < grid_size; i++) {
@@ -356,7 +346,7 @@ void dump_puzzle(const struct kkeq *p_shapes, const unsigned *p_grid_values, uns
         }
         printf("</tr>");
     }
-    printf("</table></body></html>");
+    printf("</table>");
 }
 
 void create_random_grid_values(unsigned *grid_data, unsigned grid_size, unsigned long *rseed) {
@@ -444,6 +434,7 @@ void convert_sets_to_shapes(struct kkeq *p_shapes, const struct bigu *p_sets, co
                             break;
                         }
                     }
+
                 if (j == p_shapes[i].nb_segment) {
                     option_values[nb_options] = tmp;
                     option_ops[nb_options++]  = OP_SUB;
@@ -460,6 +451,7 @@ void convert_sets_to_shapes(struct kkeq *p_shapes, const struct bigu *p_sets, co
                             break;
                         }
                     }
+
                 if (j == p_shapes[i].nb_segment) {
                     option_values[nb_options] = tmp;
                     option_ops[nb_options++]  = OP_DIV;
@@ -477,6 +469,272 @@ void convert_sets_to_shapes(struct kkeq *p_shapes, const struct bigu *p_sets, co
     }
 }
 
+/* Returns the number of solutions */
+unsigned find_all_solutions_rec
+    (const struct kkeq *p_shape_list
+    ,unsigned           nb_shapes
+    ,unsigned           current_shape_index
+    ,unsigned           shape_max_state
+    ,unsigned           shape_state
+    ,unsigned           shape_cell_idx
+    ,unsigned          *p_grid
+    ,unsigned           grid_size
+    ,unsigned          *p_row_bits
+    ,unsigned          *p_col_bits
+    ) {
+
+    if (current_shape_index == nb_shapes) {
+        printf("<br />");
+        dump_puzzle(p_shape_list, p_grid, nb_shapes, grid_size, 1);
+        return 1;
+    }
+
+    const struct kkeq *p_shapes = p_shape_list + current_shape_index;
+    const unsigned addr         = p_shapes->segment_indexes[shape_cell_idx];
+    const unsigned row          = addr / grid_size;
+    const unsigned col          = addr - row * grid_size;
+    unsigned i;
+
+#if 0
+    if (shape_cell_idx == 0) {
+        unsigned x, y;
+        for (y = 0; y < grid_size; y++) {
+            for (x = 0; x < grid_size; x++) {
+                printf("%6d", p_grid[y*grid_size+x]);
+            }
+            printf("\n");
+        }
+        printf("--- below will be a solution for op=%d val=%d (remain %d)\n", p_shapes->operation, p_shapes->value, current_shape_index);
+    }
+    printf("looking at %d,%d\n", row, col);
+#endif
+
+    if (p_shapes->operation == OP_FIXED) {
+        unsigned soln_count;
+        if ((p_col_bits[col] & (1u << p_shapes->value)) || (p_row_bits[row] & (1u << p_shapes->value)))
+            return 0; /* No solution possible */
+        p_col_bits[col] |= (1u << p_shapes->value);
+        p_row_bits[row] |= (1u << p_shapes->value);
+        p_grid[addr]     = p_shapes->value;
+        soln_count       = find_all_solutions_rec(p_shape_list, nb_shapes, current_shape_index+1, 0, 0, 0, p_grid, grid_size, p_row_bits, p_col_bits);
+        p_col_bits[col] &= ~(1u << p_shapes->value);
+        p_row_bits[row] &= ~(1u << p_shapes->value);
+        p_grid[addr]     = 0;
+        return soln_count;
+    }
+
+    if (p_shapes->operation == OP_SUB) {
+        if (shape_cell_idx+1 == p_shapes->nb_segment) {
+            unsigned soln_count = 0;
+            /* Option 1: value = max_state - (state - max_state + x) {x = 2*max_state - state - value} where x < max_state
+             * Option 2: value = x - state {x = value + state} where x > max_state */
+            unsigned rvals[2];
+            rvals[0] = p_shapes->value + shape_state;
+            if (rvals[0] <= shape_max_state || rvals[0] > grid_size)
+                rvals[0] = 0;
+            rvals[1] = (2*shape_max_state > shape_state + p_shapes->value) ? (2*shape_max_state - shape_state - p_shapes->value) : 0;
+            if (rvals[1] >= shape_max_state || rvals[1] > grid_size || rvals[1] == rvals[0])
+                rvals[1] = 0;
+            for (i = 0; i < 2; i++) {
+                unsigned rval = rvals[i];
+                if (rval == 0)
+                    continue;
+                if (!(p_col_bits[col] & (1u << rval)) && !(p_row_bits[row] & (1u << rval))) {
+                    p_col_bits[col] |= (1u << rval);
+                    p_row_bits[row] |= (1u << rval);
+                    p_grid[addr]     = rval;
+                    soln_count += find_all_solutions_rec(p_shape_list, nb_shapes, current_shape_index+1, 0, 0, 0, p_grid, grid_size, p_row_bits, p_col_bits);
+                    p_col_bits[col] &= ~(1u << rval);
+                    p_row_bits[row] &= ~(1u << rval);
+                    p_grid[addr]     = 0;
+                }
+            }
+            return soln_count;
+        } else {
+            unsigned soln_count = 0;
+            if (shape_cell_idx == 0) {
+                shape_state     = 0;
+                shape_max_state = 0;
+            }
+            for (i = 1; i <= grid_size; i++) {
+                unsigned nmax = (i > shape_max_state) ? i : shape_max_state;
+                /* Todo: is this correct??? */
+                if (shape_state - nmax + i >= grid_size)
+                    continue;
+                if ((p_col_bits[col] & (1u << i)) || (p_row_bits[row] & (1u << i)))
+                    continue;
+                p_col_bits[col] |= (1u << i);
+                p_row_bits[row] |= (1u << i);
+                p_grid[addr]     = i;
+                soln_count      += find_all_solutions_rec(p_shape_list, nb_shapes, current_shape_index, nmax, shape_state + i, shape_cell_idx + 1, p_grid, grid_size, p_row_bits, p_col_bits);
+                p_col_bits[col] &= ~(1u << i);
+                p_row_bits[row] &= ~(1u << i);
+                p_grid[addr]     = 0;
+            }
+            return soln_count;
+        }
+    }
+
+    if (p_shapes->operation == OP_SUM) {
+        if (shape_cell_idx+1 == p_shapes->nb_segment) {
+            unsigned rval;
+            unsigned nsol;
+            assert(p_shapes->value > shape_state);
+            rval = p_shapes->value - shape_state;
+            if  (   rval > grid_size
+                ||  (p_col_bits[col] & (1u << rval))
+                ||  (p_row_bits[row] & (1u << rval))
+                )
+                return 0;
+            p_col_bits[col] |= (1u << rval);
+            p_row_bits[row] |= (1u << rval);
+            p_grid[addr]     = rval;
+            nsol             = find_all_solutions_rec(p_shape_list, nb_shapes, current_shape_index+1, 0, 0, 0, p_grid, grid_size, p_row_bits, p_col_bits);
+            p_col_bits[col] &= ~(1u << rval);
+            p_row_bits[row] &= ~(1u << rval);
+            p_grid[addr]     = 0;
+            return nsol;
+        } else {
+            unsigned soln_count = 0;
+            if (shape_cell_idx == 0)
+                shape_state = 0;
+            for (i = 1; i <= grid_size; i++) {
+                if (shape_state + i >= p_shapes->value)
+                    break;
+                if ((p_col_bits[col] & (1u << i)) || (p_row_bits[row] & (1u << i)))
+                    continue;
+                p_col_bits[col] |= (1u << i);
+                p_row_bits[row] |= (1u << i);
+                p_grid[addr]     = i;
+                soln_count      += find_all_solutions_rec(p_shape_list, nb_shapes, current_shape_index, 0, shape_state + i, shape_cell_idx + 1, p_grid, grid_size, p_row_bits, p_col_bits);
+                p_col_bits[col] &= ~(1u << i);
+                p_row_bits[row] &= ~(1u << i);
+                p_grid[addr]     = 0;
+            }
+            return soln_count;
+        }
+    }
+
+    if (p_shapes->operation == OP_MUL) {
+        if (shape_cell_idx+1 == p_shapes->nb_segment) {
+            unsigned rval;
+            unsigned nsol;
+            assert(p_shapes->value % shape_state == 0);
+            rval = p_shapes->value / shape_state;
+            if  (   rval > grid_size
+                ||  (p_col_bits[col] & (1u << rval))
+                ||  (p_row_bits[row] & (1u << rval))
+                )
+                return 0;
+            p_col_bits[col] |= (1u << rval);
+            p_row_bits[row] |= (1u << rval);
+            p_grid[addr]     = rval;
+            nsol             = find_all_solutions_rec(p_shape_list, nb_shapes, current_shape_index+1, 0, 0, 0, p_grid, grid_size, p_row_bits, p_col_bits);
+            p_col_bits[col] &= ~(1u << rval);
+            p_row_bits[row] &= ~(1u << rval);
+            p_grid[addr]     = 0;
+            return nsol;
+        } else {
+            unsigned soln_count = 0;
+            if (shape_cell_idx == 0)
+                shape_state = 1;
+            for (i = 1; i <= grid_size; i++) {
+                if (shape_state * i > p_shapes->value)
+                    break;
+                if ((p_shapes->value / shape_state) % i != 0)
+                    continue;
+                if ((p_col_bits[col] & (1u << i)) || (p_row_bits[row] & (1u << i)))
+                    continue;
+                p_col_bits[col] |= (1u << i);
+                p_row_bits[row] |= (1u << i);
+                p_grid[addr]     = i;
+                soln_count      += find_all_solutions_rec(p_shape_list, nb_shapes, current_shape_index, 0, shape_state * i, shape_cell_idx + 1, p_grid, grid_size, p_row_bits, p_col_bits);
+                p_col_bits[col] &= ~(1u << i);
+                p_row_bits[row] &= ~(1u << i);
+                p_grid[addr]     = 0;
+            }
+            return soln_count;
+        }
+    }
+
+    if (p_shapes->operation == OP_DIV) {
+        if (shape_cell_idx+1 == p_shapes->nb_segment) {
+            unsigned soln_count = 0;
+            /* Option 1: value = x / state where x >= max_state
+             *   x = value * state
+             * Option 2: value = max / ((state/max) * x) where x <= max_state
+             *   x = (max * max) / (value * state) */
+            unsigned rvals[2];
+            rvals[0] = p_shapes->value * shape_state;
+            if (rvals[0] < shape_max_state || rvals[0] > grid_size)
+                rvals[0] = 0;
+            rvals[1] = ((shape_max_state * shape_max_state) % (p_shapes->value * shape_state) == 0) ? ((shape_max_state * shape_max_state) / (p_shapes->value * shape_state)) : 0;
+            if (rvals[1] >= shape_max_state || rvals[1] > grid_size || rvals[1] == rvals[0])
+                rvals[1] = 0;
+            for (i = 0; i < 2; i++) {
+                unsigned rval = rvals[i];
+                if (rval == 0)
+                    continue;
+                if (!(p_col_bits[col] & (1u << rval)) && !(p_row_bits[row] & (1u << rval))) {
+                    p_col_bits[col] |= (1u << rval);
+                    p_row_bits[row] |= (1u << rval);
+                    p_grid[addr]     = rval;
+                    soln_count += find_all_solutions_rec(p_shape_list, nb_shapes, current_shape_index+1, 0, 0, 0, p_grid, grid_size, p_row_bits, p_col_bits);
+                    p_col_bits[col] &= ~(1u << rval);
+                    p_row_bits[row] &= ~(1u << rval);
+                    p_grid[addr]     = 0;
+                }
+            }
+            return soln_count;
+        } else {
+            unsigned soln_count = 0;
+            if (shape_cell_idx == 0) {
+                shape_state     = 0;
+                shape_max_state = 0;
+            }
+            for (i = 1; i <= grid_size; i++) {
+                unsigned nmax = (i > shape_max_state) ? i : shape_max_state;
+                /* Todo: is this correct??? */
+                if (shape_state * i / nmax >= grid_size)
+                    continue;
+                if ((p_col_bits[col] & (1u << i)) || (p_row_bits[row] & (1u << i)))
+                    continue;
+                p_col_bits[col] |= (1u << i);
+                p_row_bits[row] |= (1u << i);
+                p_grid[addr]     = i;
+                soln_count      += find_all_solutions_rec(p_shape_list, nb_shapes, current_shape_index, nmax, shape_state + i, shape_cell_idx + 1, p_grid, grid_size, p_row_bits, p_col_bits);
+                p_col_bits[col] &= ~(1u << i);
+                p_row_bits[row] &= ~(1u << i);
+                p_grid[addr]     = 0;
+            }
+            return soln_count;
+        }
+    }
+
+
+#if 0
+    unsigned x, y;
+    for (y = 0; y < grid_size; y++) {
+        for (x = 0; x < grid_size; x++) {
+            printf("%6d", p_grid[y*grid_size+x]);
+        }
+        printf("\n");
+    }
+    printf("crashing now\n");
+#endif
+    abort();
+
+}
+
+unsigned find_all_solutions(const struct kkeq *p_shapes, unsigned nb_shapes, unsigned grid_size) {
+    unsigned row_bits[MAX_GRID];
+    unsigned col_bits[MAX_GRID];
+    unsigned grid[MAX_GRID*MAX_GRID];
+    memset(grid,     0, sizeof(grid));
+    memset(row_bits, 0, sizeof(row_bits));
+    memset(col_bits, 0, sizeof(col_bits));
+    return find_all_solutions_rec(p_shapes, nb_shapes, 0, 0, 0, 0, grid, grid_size, row_bits, col_bits);
+}
 
 void build_sets(unsigned grid_size, unsigned long *rseed) {
     struct bigu cur;
@@ -547,7 +805,67 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
 
     kkeq_sort(shapedata, u);
 
+    /* Dump preamble */
+    printf("<html><head><title>hello</title><style>table { border-collapse: collapse; }"
+        ".collapsible {"
+        "background-color: #eee;"
+        "color: #444;"
+        "cursor: pointer;"
+        "padding: 18px;"
+        "width: 100%%;"
+        "border: none;"
+        "text-align: left;"
+        "outline: none;"
+        "font-size: 15px;"
+        "}"
+        ".active, .collapsible:hover {"
+        "background-color: #ccc;"
+        "}"
+        ".content {"
+        "padding: 0 18px;"
+        "display: none;"
+        "overflow: hidden;"
+        "background-color: #f1f1f1;"
+        "}"
+        );
+
+    for (i = 0; i < 16; i++) {
+        printf
+            ("td.x%d { font-size: 10px; vertical-align: top; text-align: left; border-top: %dpx solid black; border-left: %dpx solid black; border-bottom: %dpx solid black; border-right: %dpx solid black; height: 40px; width: 40px;} "
+            ,i
+            ,(i & FLAG_TOP) ? 4 : 1
+            ,(i & FLAG_LEFT) ? 4 : 1
+            ,(i & FLAG_BOTTOM) ? 4 : 1
+            ,(i & FLAG_RIGHT) ? 4 : 1
+            );
+    }
+    printf("</style></head><body>");
+    
     dump_puzzle(shapedata, grid_data, u, grid_size, 0);
+
+    printf("<button type=\"button\" class=\"collapsible\">Show Solutions</button>\n<div class=\"content\">");
+
+    i = find_all_solutions(shapedata, u, grid_size);
+    //i=0;
+
+    printf("</div>");
+    printf("The puzzle has %u solutions!\n", i);
+    printf("<script>"
+        "var coll = document.getElementsByClassName(\"collapsible\");"
+        "var i;"
+        "for (i = 0; i < coll.length; i++) {"
+        "  coll[i].addEventListener(\"click\", function() {"
+        "    this.classList.toggle(\"active\");"
+        "    var content = this.nextElementSibling;"
+        "    if (content.style.display === \"block\") {"
+        "      content.style.display = \"none\";"
+        "    } else {"
+        "      content.style.display = \"block\";"
+        "    }"
+        "  });"
+        "}"
+        "</script></head><body>");
+    printf("</body></html>");
 }
 
 int main(int argc, char *argv[]) {
