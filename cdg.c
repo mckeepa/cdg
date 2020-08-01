@@ -273,7 +273,7 @@ struct kkeq {
 
 
 
-#define KKEQ_CMP(a_, b_) ((a_).nb_segment < (b_).nb_segment)
+#define KKEQ_CMP(a_, b_) ((((a_).nb_segment == 1 && (b_).nb_segment) > 1) || ((a_).nb_segment > 1 && (b_).nb_segment > 1 && (a_).segment_indexes[0] < (b_).segment_indexes[0]))
 static COP_SORT_INSERTION(kkeq_sort, struct kkeq, KKEQ_CMP)
 #undef KKEQ_CMP
 
@@ -803,8 +803,6 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
 
     convert_sets_to_shapes(shapedata, stack, grid_data, grid_size, u, rseed);
 
-    kkeq_sort(shapedata, u);
-
     /* Dump preamble */
     printf("<html><head><title>%ux%u Puzzle (seed %lu)</title><style>table { border-collapse: collapse; }"
         ".collapsible {"
@@ -845,8 +843,9 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
 
     printf("<button type=\"button\" class=\"collapsible\">Show Solutions</button>\n<div class=\"content\">");
 
+    kkeq_sort(shapedata, u);
+
     i = find_all_solutions(shapedata, u, grid_size);
-    //i=0;
 
     printf("</div>");
     printf("The puzzle has %u solutions!\n", i);
