@@ -739,6 +739,7 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
     struct bigu cur;
     struct bigu complete;
     struct bigu sets[16384];
+    unsigned long captured_seed = *rseed;
     unsigned   startpoints[256]; /* > 128 bits! */
     unsigned   i, j;
     unsigned   nb_set = 0;
@@ -805,7 +806,7 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
     kkeq_sort(shapedata, u);
 
     /* Dump preamble */
-    printf("<html><head><title>hello</title><style>table { border-collapse: collapse; }"
+    printf("<html><head><title>%ux%u Puzzle (seed %lu)</title><style>table { border-collapse: collapse; }"
         ".collapsible {"
         "background-color: #eee;"
         "color: #444;"
@@ -825,7 +826,7 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
         "display: none;"
         "overflow: hidden;"
         "background-color: #f1f1f1;"
-        "}"
+        "}", grid_size, grid_size, captured_seed
         );
 
     for (i = 0; i < 16; i++) {
@@ -838,7 +839,7 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
             ,(i & FLAG_RIGHT) ? 4 : 1
             );
     }
-    printf("</style></head><body>");
+    printf("</style></head><body><h1>%ux%u Puzzle (seed %lu)</h2>", grid_size, grid_size, captured_seed);
     
     dump_puzzle(shapedata, grid_data, u, grid_size, 0);
 
