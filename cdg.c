@@ -848,7 +848,11 @@ void build_sets(unsigned grid_size, unsigned long *rseed) {
     i = find_all_solutions(shapedata, u, grid_size);
 
     printf("</div>");
-    printf("The puzzle has %u solutions!\n", i);
+    if (i == 1) {
+        printf("The puzzle has a unique solution!\n");
+    } else {
+        printf("The puzzle has %u solutions!\n", i);
+    }
     printf("<script>"
         "var coll = document.getElementsByClassName(\"collapsible\");"
         "var i;"
